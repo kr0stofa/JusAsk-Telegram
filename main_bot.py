@@ -12,11 +12,6 @@ if log: logging.basicConfig(level=logging.DEBUG,
 
 botToken = get_bot_token()
 
-# The bot has 2 functions:
-# 1. A user can set reminders for themselves and when the time comes, the bot sends them a message
-# 2. Perhaps a user can forward the bot a message and the bot will be able to parse it into a reminder.
-
-status_response = ""
 
 # Encodings
 REPORT_STATUS = 1
@@ -24,6 +19,7 @@ EXIT_MENU = "EXIT"
 
 STS = {}
 STS["reg_select_faculty"] = 101
+STS["reg_accept_faculty"] = 102
 STS["select_mods"] = 201
 STS["mod_menu_handler"] = 202
 STS["ask_confidence"] = 107
@@ -31,9 +27,10 @@ STS["req_transcript"] = 206
 STS["exit"] = 999
 
 
-MODLIST = ["CS1010S","MA1101R","CS2040", "GER1000", "GEK1000", "TR3203", "TR3201"]
+MODLIST = {"CS1010S","MA1101R","CS2040", "GER1000", "GEK1000", "TR3203", "TR3201"}
 
 MOD_REG_TABLE = {}
+USER_TABLE = {}
 
 # Storing user chat IDs so the bot can PM them
 PM_TABLE = {} # Table. Key: userid; Value: 1-to-1 chat IDs
@@ -54,8 +51,16 @@ def get_uid(update):
     return update.effective_user.username
 
 def get_chat_id(update):
-    print("UPDATE:", update)
     return update.effective_chat.id
+
+def get_callback_query(update):
+    return update.callback_query
+
+def get_origin_msg(callback_query):
+    return callback_query.message
+
+def get_callback_data(callback_query):
+    return callback_query.data
 
 # Takes in a list of buttons and return an InlineKeyboardMarkup. Optional flag fo add a "Done" button
 def make_menu(blist, add_done = True):
@@ -93,19 +98,53 @@ def direct_to_privatechat(update, context):
 
 # HOF to build handlers. Replies to the same chat as the update. Does not reply to group chats (see direct_to_privatechat)
 # Returns a handler function
-def compose_chat_state(contents, buttons = [], return_state = False):
+def generic_message_composer(contents, buttons, return_state, reply_markup=""):
     def created_state(update,context):
         diverted = direct_to_privatechat(update, context)
         if not diverted:
-            reply_mark = ReplyKeyboardMarkup([buttons],one_time_keyboard=True)
-            update.message.reply_text(contents, reply_markup=reply_mark)
+            update.message.reply_text(contents, reply_markup=reply_markup)
+            return return_state
+    return created_state
+
+# HOF to build handlers with KEYBOARD markup. Does not reply to group chats (see direct_to_privatechat)
+# Returns a handler function
+def compose_replykb_state(contents, buttons = [], return_state = False):
+    keyboard_markup = ReplyKeyboardMarkup([buttons],one_time_keyboard=True)
+    return generic_message_composer(contents, buttons, return_state, reply_markup=keyboard_markup)
+    
+
+# HOF to build handlers with INLINE markup. Does not reply to group chats (see direct_to_privatechat)
+# Returns a handler function
+def compose_inline_state(contents, inline_buttons = [], return_state = False):
+    inline_mark = make_menu(inline_buttons,add_done=False)
+    return generic_message_composer(contents, inline_buttons, return_state, reply_markup=inline_mark)
+
+# HOF to build handlers to EDIT messages and optionally attach an INLINE markup. Does not reply to group chats (see direct_to_privatechat)
+# Returns a handler function
+# This must be called from a CallbackQueryHandler or something else with a CALLBACK
+def edit_inline_state(format_string = "\n%s", inline_buttons = [], return_state = False, overwrite_msg = "NULL"):
+    def created_state(update,context):
+        diverted = direct_to_privatechat(update, context)
+        if not diverted:
+            cb_query = get_callback_query(update)
+            og_msg = get_origin_msg(cb_query)
+            cb_data = get_callback_data(cb_query)
+            inline_mark = make_menu(inline_buttons,add_done=False)
+            append = format_string % cb_data
+            base_txt = overwrite_msg if not overwrite_msg == "NULL" else og_msg.text
+            context.bot.edit_message_text(
+                chat_id = og_msg.chat_id,
+                message_id = og_msg.message_id,
+                text = base_txt + append,
+                reply_markup=inline_mark
+            )
             return return_state
     return created_state
 
 
 # CORE COMPONENT
 def start_message(update, context):
-    print("START MESSAGE UPDATE ", update , " \nCONTEXT ", context)
+    # print("START MESSAGE UPDATE ", update , " \nCONTEXT ", context)
     chat_ID = get_chat_id(update)
     user = update.effective_user
     firstname = user.first_name
@@ -120,14 +159,26 @@ def start_message(update, context):
 def choose_school(update, context):
     msg = "Which school are you in? If your school is not on the list that means we currently do not support your school at this time :("
     school_buttons = ['NUS']
-    return compose_chat_state(msg, buttons=school_buttons, return_state=STS['reg_select_faculty'])(update,context)
+    return compose_inline_state(msg, inline_buttons=school_buttons, return_state=STS['reg_select_faculty'])(update,context)
 
+def select_faculty(update,context):
+    msg = "Please select your faculty:"
+    facs = ['ARCHI', 'COMP', 'BIZ','ENGIN','FASS','SCI', 'SDE']
+    return edit_inline_state(format_string = ("University: %s\n\n"+msg), inline_buttons=facs, return_state=STS['reg_accept_faculty'], overwrite_msg="")(update,context)
 
-def select_NUS_faculty(update,context):
-    print("SELECT NUS FACULTY")
-    msg = "Please select your faculty!"
-    fac_buttons = ['ARCHI',  'COMP', 'BIZ','FASS','SCI', 'SDE']
-    return compose_chat_state(msg, buttons=fac_buttons, return_state=STS['select_mods'])(update,context)
+# Should work for any University faculty
+def accept_faculty_push_mods(update,context):
+    cb_query = get_callback_query(update)
+    og_msg = get_origin_msg(cb_query)
+    selected_fac = get_callback_data(cb_query)
+    append = "\n%s" % selected_fac
+    context.bot.edit_message_text(
+            chat_id = og_msg.chat_id,
+            message_id = og_msg.message_id,
+            text = og_msg.text + append
+    )
+    choose_modules(update,context)
+    return STS["mod_menu_handler"]
 
 
 #### SYMPTOM REPORTING CALLBACKS ####
@@ -224,6 +275,16 @@ def do_nothing(update, context):
 def open_manager(update, context):
     pass 
 
+def print_table(update,context):
+    user_ID = get_uid(update)
+    print("USER ATTEMPTING TO DO ADMIN THINGS: ", user_ID)
+    if user_ID == "Lessthanfree":
+        context.bot.send_message(
+            chat_id = get_chat_id(update),
+            text="Dumping Table: {}".format(MOD_REG_TABLE)
+        )
+    return
+
 def handle_manager_buttonpress(update,context):
     user_ID = get_uid(update)
     cb_query = update.callback_query
@@ -259,19 +320,16 @@ def handle_manager_buttonpress(update,context):
 # CHATBOT INIT
 # Initalizes the handlers for this dispatcher
 def init_handlers(dis):
-    global status_response
     start_handler = CommandHandler('start', start_message)
+    admin_handler = CommandHandler('admin', print_table)
     
     register_handler = ConversationHandler(
         entry_points=[
             CommandHandler('register', choose_school)
             ],
         states={
-                STS['reg_select_faculty']: [
-                    MessageHandler(Filters.regex('^NUS$'), select_NUS_faculty),
-                    MessageHandler(Filters.regex('^NTU$'), do_nothing)
-                ],
-                STS["select_mods"]: [MessageHandler(Filters.text, choose_modules)],
+                STS['reg_select_faculty']: [CallbackQueryHandler(select_faculty)],
+                STS['reg_accept_faculty']:[CallbackQueryHandler(accept_faculty_push_mods)],
                 STS["mod_menu_handler"]: [CallbackQueryHandler(handle_mod_buttonpress)],
                 STS["exit"]: [MessageHandler(Filters.text, do_nothing)]
             },
@@ -302,6 +360,7 @@ def init_handlers(dis):
         allow_reentry = True        
     )
 
+    dis.add_handler(admin_handler)
     dis.add_handler(start_handler)
     dis.add_handler(register_handler)
     dis.add_handler(ask_handler)
