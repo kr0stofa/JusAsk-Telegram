@@ -1,8 +1,9 @@
 from telegram.ext import CommandHandler, ConversationHandler, Filters, Updater
 from telegram.ext import CallbackQueryHandler, InlineQueryHandler, MessageHandler
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
-from supp_classes import Remindo
 from local import get_bot_token
+from userdatamgr import UDManager
+from staticdatamgr import SDManager
 import logging
 
 log = 1

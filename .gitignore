@@ -4,3 +4,5 @@ misc.txt
 local.py
 
 __pycache__/
+
+localfiles/
