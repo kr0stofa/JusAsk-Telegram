@@ -16,56 +16,43 @@ class UDManager:
         if not self.data == {}:
             print("<DBManager load> Attempting to load from file when DATA NOT EMPTY")
 
-        try:
-            with open(self.filepath, 'r') as readfile:
-                self.data = json.load(readfile)
-        
-        except Exception as e:
-            print("<DBManager load> Exception! ", e)
-            logging.error("DBManager failed to load")
-
+        self.data = load_json(self.filepath)
         logging.info("Loaded successfully!")
 
     def write_to_file(self):
         write_to_json(self.filepath, self.data)
 
-    def get_user_value(self, uid, key):
-        return self._get_user(uid).get(key)
+    # Returns false if the user doesnt have this 
 
     # Internal method
-    def _get_user(self, userID):
-        return self.data.get(userID, False)
+    # If user doesnt exist, return a blank dict
+    def get_user(self, userID):
+        out = self.data.get(userID, {})
+        if not out:
+            logging.warn("User %s does not exist" % userID,)
+        return out
 
     # Called only by write
     def _create_user(self, userID):
         assert not userID in self.data 
         self.data[userID] = {}
+        logging.warn("Created User: '%s'" % userID)
         return self.data[userID]
 
-    # Writes to the 
-    def _write_to_user(self, userID, key, value):
-        user = self._get_user(userID)
-        if not user:
-            user = self._create_user(userID)
-        user[key] = value
+    # Writes the given value to the key the user's table 
+    # OVERWRITES any existing data
+    def write_to_user(self, userID, user_data):
+        if not self.get_user(userID):
+            self._create_user(userID)
+        self.data[userID] = user_data
+        self.write_to_file() # WRITE TO FILE AFTER EVERY UPDATE
 
-    # Boolean
+    # Boolean UNUSED
     def user_exists(self, userID):
-        return (not self._get_user(userID) == False)
+        return (not self.get_user(userID) == False)
 
-    # PM methods
-    def add_to_pmtable(self, userID, chatID):
-        self._write_to_user(userID, "chatID", chatID)
-        return
-    
-    def get_chatID(self, userID):
-        return self.get_user_value(userID, "chatID")
 
-    # MODULE methods
-    def add_senior_modules(self, userID, senior_mods):
-        self._write_to_user(userID, "senior_modules", senior_mods)
-        return
-
-test = UDManager()
-test.load()
-test.write_to_file()
+# TESTS
+# test = UDManager()
+# test.load()
+# test.write_to_file()
