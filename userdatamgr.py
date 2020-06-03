@@ -2,6 +2,7 @@ import json
 import os
 import logging
 from configs import LOCAL_FOLDER_NAME, DB_FILE_NAME
+from file_utils import write_to_json, load_json
 
 DEFAULT_FILENAME = os.path.join(LOCAL_FOLDER_NAME, DB_FILE_NAME)
 
@@ -23,10 +24,13 @@ class UDManager:
             print("<DBManager load> Exception! ", e)
             logging.error("DBManager failed to load")
 
+        logging.info("Loaded successfully!")
+
     def write_to_file(self):
-        # Converts to json when writing
-        with open(self.filepath, 'w') as outfile:
-            json.dump(self.data, outfile)
+        write_to_json(self.filepath, self.data)
+
+    def get_user_value(self, uid, key):
+        return self._get_user(uid).get(key)
 
     # Internal method
     def _get_user(self, userID):
@@ -46,17 +50,22 @@ class UDManager:
         user[key] = value
 
     # Boolean
-    def is_registered(self, userID):
+    def user_exists(self, userID):
         return (not self._get_user(userID) == False)
 
+    # PM methods
     def add_to_pmtable(self, userID, chatID):
         self._write_to_user(userID, "chatID", chatID)
         return
+    
+    def get_chatID(self, userID):
+        return self.get_user_value(userID, "chatID")
 
+    # MODULE methods
     def add_senior_modules(self, userID, senior_mods):
         self._write_to_user(userID, "senior_modules", senior_mods)
         return
 
 test = UDManager()
-test.add_to_pmtable("abcd123", "b497149v14")
+test.load()
 test.write_to_file()
