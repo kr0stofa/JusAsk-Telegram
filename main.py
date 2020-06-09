@@ -2,8 +2,10 @@ from telegram.ext import CommandHandler, ConversationHandler, Filters, Updater
 from telegram.ext import CallbackQueryHandler, InlineQueryHandler, MessageHandler
 from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from local import get_bot_token
+from configs import CHOPE_DURATION
 from account import Accounter
 from staticdatamgr import SDManager
+from questions import QuestionHolder
 
 import logging
 
@@ -19,6 +21,8 @@ sdmanager.load()
 MODLIST = sdmanager.get_modlist("NUS")
 
 accounter = Accounter()
+qholder = QuestionHolder()
+
 
 # Encodings
 REPORT_STATUS = 1
@@ -34,11 +38,16 @@ STS["handle_senior_choice"] = 301
 STS["ask_confidence"] = 107
 STS["req_transcript"] = 206
 STS["handle_account_buttonpress"] = 501
+STS["handle_question_loop"] = 601
+STS["finish_asking_question"] = 602
+STS["edit_profile"] = 801
+STS["handle_answer_menu_press"] = 701
+STS["recieve_senior_answer"] = 702
 STS["exit"] = 999
 
 
 MOD_REG_TABLE = {}
-USER_TABLE = {}
+MQ_MAP = {} # Message-question mapping
 
 # Storing user chat IDs so the bot can PM them
 def add_to_PM_TABLE(userID, chatID):
@@ -53,6 +62,9 @@ def get_private_chat_id(userID):
 def get_uid(update):
     return update.effective_user.username
 
+def get_message(update):
+    return update.message
+
 def get_chat_id(update):
     return update.effective_chat.id
 
@@ -65,26 +77,53 @@ def get_origin_msg(callback_query):
 def get_callback_data(callback_query):
     return callback_query.data
 
+# Returns the message object
 def send_message(update, context, content, markup=""):
-    context.bot.send_message(
-        chat_id = get_chat_id(update),
+    return send_message_to_chatid(context.bot, get_chat_id(update), content, markup)
+
+# Returns message object
+def send_message_to_chatid(bot, chat_id, content, markup = ""):
+    return bot.send_message(
+        chat_id = chat_id,
         text = content,
         reply_markup = markup
     )
 
 # Takes in a list of buttons and return an InlineKeyboardMarkup. Optional flag fo add a "Done" button
-def make_menu(blist, add_done = True):
+# The final format must be a list of lists of button objects like [[button1, button2], [button3], [donebutton]]
+def make_menu(blist, add_done = True, vertical = True):
+    if vertical:
+        button_wrap = lambda x: [x]
+        l_wrap = lambda y: y
+    else:
+        button_wrap = lambda x: x
+        l_wrap = lambda y:[y]
+
     button_list = []
     for b_txt in blist:
-        entry = [InlineKeyboardButton(b_txt, callback_data = b_txt)]
+        entry = button_wrap(InlineKeyboardButton(b_txt, callback_data = b_txt))
         button_list.append(entry)
     
+    button_list = l_wrap(button_list)
+    
     if add_done:
-        done = [InlineKeyboardButton("Done", callback_data = EXIT_MENU)]
+        done = [(InlineKeyboardButton("Done", callback_data = EXIT_MENU))] # Done is always on the bottom row
         button_list.append(done)
+
+    # print("<MAKE MENU>: %s" % button_list)
 
     menu_mu = InlineKeyboardMarkup(button_list)
     return menu_mu
+
+# Removes inline buttons
+def remove_inline_buttons(update, context):
+    og_msg = get_origin_msg(get_callback_query(update))
+    context.bot.edit_message_text(
+                chat_id = og_msg.chat_id,
+                message_id = og_msg.message_id,
+                text = og_msg.text,
+                reply_markup=""
+            )
 
 # Filter to divert people to private chats.
 # Returns True if diverted.
@@ -127,22 +166,22 @@ def compose_replykb_state(contents, buttons = [], return_state = False):
 # HOF to build handlers with INLINE markup. Does not reply to group chats (see direct_to_privatechat)
 # Returns a handler function. 
 # MAKE SURE TO ADD (update,context) as a suffix
-def compose_inline_state(contents, inline_buttons = [], return_state = False):
-    inline_mark = make_menu(inline_buttons,add_done=False)
+def compose_inline_state(contents, inline_buttons = [], add_done=False, return_state = False, vertical = True):
+    inline_mark = make_menu(inline_buttons,add_done=add_done ,vertical=vertical)
     return generic_message_composer(contents, inline_buttons, return_state, reply_markup=inline_mark)
 
 # HOF to build handlers to EDIT messages and optionally attach an INLINE markup. Does not reply to group chats (see direct_to_privatechat)
 # Returns a handler function
 # This must be called from a CallbackQueryHandler or something else with a CALLBACK
-def edit_inline_state(format_string = "\n%s", inline_buttons = [], return_state = False, overwrite_msg = "NULL", collect_fn = lambda b,a: (b+a)):
+def edit_inline_state(format_string = "\n{}", inline_buttons = [], add_done=False, return_state = False, overwrite_msg = "NULL", collect_fn = lambda b,a: (b+a), vertical = True):
     def created_state(update,context):
         diverted = direct_to_privatechat(update, context)
         if not diverted:
             cb_query = get_callback_query(update)
             og_msg = get_origin_msg(cb_query)
             cb_data = get_callback_data(cb_query)
-            inline_mark = make_menu(inline_buttons,add_done=False)
-            append = format_string % cb_data
+            inline_mark = make_menu(inline_buttons,add_done=add_done, vertical=vertical)
+            append = format_string.format(cb_data)
             base_txt = overwrite_msg if not overwrite_msg == "NULL" else og_msg.text
             context.bot.edit_message_text(
                 chat_id = og_msg.chat_id,
@@ -180,7 +219,7 @@ def choose_school(update, context):
 def select_faculty(update,context):
     msg = "Please select your faculty:"
     facs = ['ARCHI', 'COMP', 'BIZ','ENGIN','FASS','SCI', 'SDE']
-    return edit_inline_state(format_string = ("University:\n%s\n\n"+msg), inline_buttons=facs, return_state=STS['reg_accept_faculty'], overwrite_msg="")(update,context)
+    return edit_inline_state(format_string = ("University:\n{}\n\n"+msg), inline_buttons=facs, return_state=STS['reg_accept_faculty'], overwrite_msg="")(update,context)
 
 # Should work for any University faculty
 def accept_faculty_push_year_qn(update,context):
@@ -191,7 +230,7 @@ def accept_faculty_push_year_qn(update,context):
 
     new_qn = "Which year of study are you in?"
     years = ['Year 1', 'Year 2', 'Year 3','Year 4','Year 5','Masters', 'PHD']
-    return edit_inline_state(format_string = ("\n%s\n\n"+new_qn), inline_buttons=years, return_state=STS['reg_accept_year'])(update,context)
+    return edit_inline_state(format_string = ("\n{}\n\n"+new_qn), inline_buttons=years, return_state=STS['reg_accept_year'])(update,context)
 
 def accept_year_push_senior_qn(update,context):
     userID = get_uid(update)
@@ -276,7 +315,7 @@ def close_registration(update,context):
     send_message(
         update,
         context,
-        "You're all set! Hit /ask to start asking questions! If you registered as a senior, you will automatically recieve a message notifying you of questions"
+        "Registration successful! Hit /ask to start asking questions! If you registered as a senior, you will automatically recieve a message notifying you of questions"
     )
     return 
 
@@ -343,12 +382,14 @@ def print_table(update,context):
     if user_ID == "Lessthanfree":
         context.bot.send_message(
             chat_id = get_chat_id(update),
-            text="Dumping Table: {}".format(MOD_REG_TABLE)
+            text="Dumping Registration Table: {}".format(MOD_REG_TABLE)
         )
     return
 
 def handle_manager_buttonpress(update,context):
     user_ID = get_uid(update)
+    account_text = accounter.get_profile_text(userID)
+
     cb_query = update.callback_query
     og_msg = cb_query.message
     press_value = cb_query.data
@@ -360,13 +401,14 @@ def handle_manager_buttonpress(update,context):
             text = og_msg.text
             )
         return STS["exit"]
+
     if press_value == "Edit profile":
         context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
             text = og_msg.text
             )
-        return do_nothing(update, context)
+        return STS["edit_profile"]
 
     elif press_value == "Review groups":
         context.bot.edit_message_text(
@@ -378,13 +420,133 @@ def handle_manager_buttonpress(update,context):
     else:
         print("UNRECOGNIZED BUTTONPRESS")
 
+############################## ASK ##############################
+def handle_ask_question(update, context):
+    msg = "Which module are you asking help for?"
+    mods = MODLIST
+    return compose_inline_state(msg, inline_buttons = mods, return_state=STS["handle_question_loop"])(update,context)
+
+def handle_accept_question_loop(update, context):
+    chosen_mod = get_callback_data(get_callback_query(update))
+    og_msg = get_origin_msg(get_callback_query(update))
+    context.bot.edit_message_text(
+                chat_id = og_msg.chat_id,
+                message_id = og_msg.message_id,
+                text = og_msg.text + "\n%s" % chosen_mod,
+                reply_markup=""
+            )
+
+    userid = get_uid(update)
+    selected_mod = get_callback_data(get_callback_query(update))
+    qholder.add_stated_asking(userid, selected_mod)    
+    msg = "Please send the question below."
+    send_message(update, context, msg)
+    return STS["finish_asking_question"]
+
+def handle_question_finish(update, context):
+    userid = get_uid(update)
+    question_txt = update.message.text # Raw text
+    msg = "Thanks for your question! We'll let you know once someone responds!"   
+    send_message(update, context, msg)
+    
+    question = qholder.finished_asking(userid, question_txt)
+    send_chope_message(context, question)
+    return STS["exit"]
+    
+def send_chope_message(context, question):
+    bot = context.bot
+    module_code = question.get_modcode()
+    senior_chat_ids = accounter.get_chatids_for_mod(module_code)
+    question_text = question.get_text()
+
+    chope_button = make_menu(["Chope", "Nope"], add_done=False)
+    for cid in senior_chat_ids:
+        logging.debug("<SEND CHOPE MSG> PM message to chatid: ", cid)
+        msg = "New question for {}!\n\n{}\n\nWould you like to chope?\n".format(module_code, question_text)
+        msg_obj = send_message_to_chatid(
+            bot,
+            cid,
+            msg,
+            markup=chope_button
+        )
+        msg_id = msg_obj.message_id
+        # Insert information to bot_data
+        # Guessing bot_data is a dict that is within the bot
+        MQ_MAP.update({msg_id: question.make_key()})
+    return
+
+def accept_chope(update,context):
+    # print("ACCEPT CHOPE ", update)
+    cb_query = get_callback_query(update)
+    msg = get_message(cb_query)
+    msg_id = msg.message_id
+    qkey = MQ_MAP.get(msg_id)
+
+    # REMOVE MARKUP
+    remove_inline_buttons(update, context)
+
+    s_uid = get_uid(update)
+    qholder.add_q_to_senior_inventory(s_uid, qkey)
+    accept_msg = "Great! This question will be reserved for you for the next {} hours. When you are ready to provide an answer, type /answer".format(CHOPE_DURATION)
+    send_message(update,context,accept_msg)
+    return
+
+# A menu with left and right buttons.
+ans_menu_buttons = ["<", "Select current", ">"]
+
+def answer_menu(update, context):
+    uid = get_uid(update)
+    q_inventory = qholder.get_senior_inventory(uid)
+    print("<ANS MENU> Q inventory", q_inventory)
+    if len(q_inventory) < 1:
+        send_message(update, context, "You have not choped any questions! When you recieve a question message, be sure to hit the 'Chope' button!")
+    else:
+        q_content = qholder.get_senior_curr_question_string(uid)
+        msg = "Please choose the question you would like to respond to. Use the arrows to browse your choped questions\n{}".format(q_content)
+        if len(q_inventory) > 1:
+            buttons = ans_menu_buttons
+        else:
+            buttons = ["Select current"]
+        return compose_inline_state(msg, inline_buttons=buttons, return_state=STS["handle_answer_menu_press"],add_done=True, vertical=False)(update,context)
+
+def answer_menu_loop(update, context):
+    cbq = get_callback_query(update)
+    userID = get_uid(update)
+    buttonpress = get_callback_data(cbq)
+    if "current" in buttonpress:
+        return STS["recieve_senior_answer"]
+    elif "<" in buttonpress or ">" in buttonpress:
+        # Assuming there's no way you can reach this stage if you only have 1 question
+        if buttonpress == "<":
+            ishift = -1
+        elif buttonpress == ">":
+            ishift = 1
+        else:
+            remove_inline_buttons(update, context)
+            logging.error("<ANSWER MENU LOOP> Unexpected callback data value! {}".format(buttonpress))
+        
+        qholder.shift_senior_q_index(userID, ishift)
+        q_content = qholder.get_senior_curr_question_string(userID)
+        msg = "Please choose the question you would like to respond to. Use the arrows to browse your choped questions\n {}".format(q_content)
+        return edit_inline_state(format_string="", inline_buttons=ans_menu_buttons, overwrite_msg=msg,add_done=True,vertical=False, return_state=STS["handle_answer_menu_press"])(update, context)
+    else:
+        remove_inline_buttons(update, context)
+        return EXIT_MENU
+def accept_answer(update, context):
+    remove_inline_buttons(update, context)
+
+    userID = get_uid(update)
+    text = "Please enter your answer below"
+    send_message(update, context, text)
+    return 
 
 # CHATBOT INIT
 # Initalizes the handlers for this dispatcher
 def init_handlers(dis):
     start_handler = CommandHandler('start', start_message)
     admin_handler = CommandHandler('admin', print_table)
-    
+    chope_button_handler = CallbackQueryHandler(accept_chope)
+
     register_handler = ConversationHandler(
         entry_points=[
             CommandHandler('register', choose_school)
@@ -396,18 +558,21 @@ def init_handlers(dis):
                 STS["handle_senior_choice"]:[CallbackQueryHandler(handle_senior_choice)],
                 STS["select_mods"]:[CallbackQueryHandler(choose_modules_message)],
                 STS["mod_menu_handler"]: [CallbackQueryHandler(handle_mod_buttonpress)],
-                STS["exit"]: [MessageHandler(Filters.text, do_nothing)]
+                STS["exit"]: [MessageHandler(Filters.text, do_nothing)],
+                EXIT_MENU:[]
             },
         fallbacks=[
             CommandHandler('cancel', do_nothing)
         ],
         allow_reentry = True        
     )
-
-    # TODO implement this???
     ask_handler = ConversationHandler(
-        entry_points=[CommandHandler("ask", do_nothing)],
-        states = {},
+        entry_points=[CommandHandler("ask", handle_ask_question)],
+        states = {
+            STS["handle_question_loop"]:[CallbackQueryHandler(handle_accept_question_loop)],
+            STS["finish_asking_question"]:[MessageHandler(Filters.all, handle_question_finish)],
+            EXIT_MENU:[]
+        },
         fallbacks = [
             CommandHandler('cancel', do_nothing)
         ],
@@ -418,7 +583,22 @@ def init_handlers(dis):
         entry_points = [
             CommandHandler('account', open_account_manager)
             ],
-        states = {},
+        states = {
+            EXIT_MENU:[]
+        },
+        fallbacks = [
+            CommandHandler('cancel', do_nothing)
+        ],
+        allow_reentry = True        
+    )
+
+    answer_handler = ConversationHandler(
+        entry_points = [CommandHandler("answer", answer_menu)],
+        states={
+            STS["handle_answer_menu_press"]:[CallbackQueryHandler(answer_menu_loop)],
+            STS["recieve_senior_answer"]:[CallbackQueryHandler(accept_answer)],
+            EXIT_MENU:[]
+        },
         fallbacks = [
             CommandHandler('cancel', do_nothing)
         ],
@@ -429,7 +609,9 @@ def init_handlers(dis):
     dis.add_handler(start_handler)
     dis.add_handler(register_handler)
     dis.add_handler(ask_handler)
+    dis.add_handler(answer_handler)
     dis.add_handler(account_manage_handler)
+    dis.add_handler(chope_button_handler)
 
     return dis
 

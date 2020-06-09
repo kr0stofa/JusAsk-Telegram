@@ -11,6 +11,7 @@ class Accounter:
     def __init__(self):
         self.udm = UDManager()
         self.udm.load()
+        self.dnd_table = {}
 
     def _get_user_value(self, userID, key):
         user_data = self.udm.get_user(userID)
@@ -56,6 +57,12 @@ class Accounter:
     # MODULE methods
     def add_senior_modules(self, userID, senior_mods):
         self._write_to_user_value(userID, k_snrmods, senior_mods)
+        info = {
+                "grade": "A-",
+                "semester": "18/19 Sem 1"
+            }
+        for modcode in senior_mods:
+            self.udm.write_user_to_module(modcode, userID, info)
         return
 
     def get_senior_modules(self, uid):
@@ -75,3 +82,26 @@ class Accounter:
             
         final = template.format(fac, year, modules_text)
         return final
+
+    # Returns a list of chat ids 
+    def get_chatids_for_mod(self, module_code):
+        senior_chat_ids = []
+        mod_data = self.udm.get_module(module_code)
+        senior_userids = list(mod_data.keys())
+        for suid in senior_userids:
+            if not self._is_dnd(suid):
+                senior_chat_ids.append(self.get_chatID(suid))
+        return senior_chat_ids
+
+    def _is_dnd(self, senior_uid):
+        return senior_uid in self.dnd_table
+
+    def toggle_dnd(self, senior_uid):
+        if senior_uid in self.dnd_table:
+            # Turn off
+            self.dnd_table.pop(senior_uid)
+        else:
+            # Turn on
+            self.dnd_table[senior_uid] = 1
+
+        

@@ -6,3 +6,5 @@ local.py
 __pycache__/
 
 localfiles/
+
+.vscode/
