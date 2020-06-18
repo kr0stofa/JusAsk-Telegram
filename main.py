@@ -43,6 +43,8 @@ STS["finish_asking_question"] = 602
 STS["edit_profile"] = 801
 STS["handle_answer_menu_press"] = 701
 STS["recieve_senior_answer"] = 702
+STS["finish_answer"] = 703
+
 STS["exit"] = 999
 
 
@@ -64,6 +66,9 @@ def get_uid(update):
 
 def get_message(update):
     return update.message
+
+def get_message_text(message):
+    return message.text
 
 def get_chat_id(update):
     return update.effective_chat.id
@@ -121,7 +126,7 @@ def remove_inline_buttons(update, context):
     context.bot.edit_message_text(
                 chat_id = og_msg.chat_id,
                 message_id = og_msg.message_id,
-                text = og_msg.text,
+                text = get_message_text(og_msg),
                 reply_markup=""
             )
 
@@ -182,7 +187,7 @@ def edit_inline_state(format_string = "\n{}", inline_buttons = [], add_done=Fals
             cb_data = get_callback_data(cb_query)
             inline_mark = make_menu(inline_buttons,add_done=add_done, vertical=vertical)
             append = format_string.format(cb_data)
-            base_txt = overwrite_msg if not overwrite_msg == "NULL" else og_msg.text
+            base_txt = overwrite_msg if not overwrite_msg == "NULL" else get_message_text(og_msg)
             context.bot.edit_message_text(
                 chat_id = og_msg.chat_id,
                 message_id = og_msg.message_id,
@@ -243,7 +248,7 @@ def accept_year_push_senior_qn(update,context):
     context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
-            text = og_msg.text + append
+            text = get_message_text(og_msg) + append
     )
     choose_senior(update, context) # Ask the followup question
     return STS["mod_menu_handler"]
@@ -293,14 +298,14 @@ def handle_mod_buttonpress(update, context):
         context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
-            text = og_msg.text + done_line
+            text = get_message_text(og_msg) + done_line
             )
         close_registration(update, context)
         return STS["exit"]
 
     toggle_mod_in_table(press_value, user_ID)
     listed_mods_text = get_listed_mods_text(user_ID)
-    header = og_msg.text.split(":")[0] + ":\n"
+    header = get_message_text(og_msg).split(":")[0] + ":\n"
     new_text = header + listed_mods_text
     context.bot.edit_message_text(
         chat_id = og_msg.chat_id,
@@ -388,7 +393,7 @@ def print_table(update,context):
 
 def handle_manager_buttonpress(update,context):
     user_ID = get_uid(update)
-    account_text = accounter.get_profile_text(userID)
+    account_text = accounter.get_profile_text(user_ID)
 
     cb_query = update.callback_query
     og_msg = cb_query.message
@@ -398,7 +403,7 @@ def handle_manager_buttonpress(update,context):
         context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
-            text = og_msg.text
+            text = get_message_text(og_msg)
             )
         return STS["exit"]
 
@@ -406,15 +411,15 @@ def handle_manager_buttonpress(update,context):
         context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
-            text = og_msg.text
+            text = get_message_text(og_msg)
             )
         return STS["edit_profile"]
 
-    elif press_value == "Review groups":
+    elif press_value == "Some other thing":
         context.bot.edit_message_text(
             chat_id = og_msg.chat_id,
             message_id = og_msg.message_id,
-            text = og_msg.text
+            text = get_message_text(og_msg)
             )
         return do_nothing(update, context)
     else:
@@ -432,7 +437,7 @@ def handle_accept_question_loop(update, context):
     context.bot.edit_message_text(
                 chat_id = og_msg.chat_id,
                 message_id = og_msg.message_id,
-                text = og_msg.text + "\n%s" % chosen_mod,
+                text = get_message_text(og_msg) + "\n%s" % chosen_mod,
                 reply_markup=""
             )
 
@@ -445,7 +450,7 @@ def handle_accept_question_loop(update, context):
 
 def handle_question_finish(update, context):
     userid = get_uid(update)
-    question_txt = update.message.text # Raw text
+    question_txt = get_message_text(get_message(update)) # Raw text
     msg = "Thanks for your question! We'll let you know once someone responds!"   
     send_message(update, context, msg)
     
@@ -461,7 +466,7 @@ def send_chope_message(context, question):
 
     chope_button = make_menu(["Chope", "Nope"], add_done=False)
     for cid in senior_chat_ids:
-        logging.debug("<SEND CHOPE MSG> PM message to chatid: ", cid)
+        logging.debug("<SEND CHOPE MSG> PM message to chatid: %s" % cid)
         msg = "New question for {}!\n\n{}\n\nWould you like to chope?\n".format(module_code, question_text)
         msg_obj = send_message_to_chatid(
             bot,
@@ -478,6 +483,12 @@ def send_chope_message(context, question):
 def accept_chope(update,context):
     # print("ACCEPT CHOPE ", update)
     cb_query = get_callback_query(update)
+    button = get_callback_data(cb_query)
+    if not button == "Chope":
+        # Not the correct callback
+        logging.error("Not Chope: %s" % button)
+        return
+
     msg = get_message(cb_query)
     msg_id = msg.message_id
     qkey = MQ_MAP.get(msg_id)
@@ -496,14 +507,13 @@ ans_menu_buttons = ["<", "Select current", ">"]
 
 def answer_menu(update, context):
     uid = get_uid(update)
-    q_inventory = qholder.get_senior_inventory(uid)
-    print("<ANS MENU> Q inventory", q_inventory)
-    if len(q_inventory) < 1:
+    if not qholder.senior_has_questions(uid):
         send_message(update, context, "You have not choped any questions! When you recieve a question message, be sure to hit the 'Chope' button!")
     else:
         q_content = qholder.get_senior_curr_question_string(uid)
+        q_list = qholder.get_senior_q_list(uid)
         msg = "Please choose the question you would like to respond to. Use the arrows to browse your choped questions\n{}".format(q_content)
-        if len(q_inventory) > 1:
+        if len(q_list) > 1:
             buttons = ans_menu_buttons
         else:
             buttons = ["Select current"]
@@ -514,7 +524,10 @@ def answer_menu_loop(update, context):
     userID = get_uid(update)
     buttonpress = get_callback_data(cbq)
     if "current" in buttonpress:
-        return STS["recieve_senior_answer"]
+        # Lock in the current question ID
+        remove_inline_buttons(update,context)
+        return accept_answer(update, context)
+
     elif "<" in buttonpress or ">" in buttonpress:
         # Assuming there's no way you can reach this stage if you only have 1 question
         if buttonpress == "<":
@@ -528,24 +541,89 @@ def answer_menu_loop(update, context):
         qholder.shift_senior_q_index(userID, ishift)
         q_content = qholder.get_senior_curr_question_string(userID)
         msg = "Please choose the question you would like to respond to. Use the arrows to browse your choped questions\n {}".format(q_content)
-        return edit_inline_state(format_string="", inline_buttons=ans_menu_buttons, overwrite_msg=msg,add_done=True,vertical=False, return_state=STS["handle_answer_menu_press"])(update, context)
+        return edit_inline_state(
+            format_string="", 
+            inline_buttons=ans_menu_buttons, 
+            overwrite_msg=msg,
+            add_done=True,
+            vertical=False, 
+            return_state=STS["handle_answer_menu_press"]
+        )(update, context)
     else:
         remove_inline_buttons(update, context)
         return EXIT_MENU
-def accept_answer(update, context):
-    remove_inline_buttons(update, context)
 
-    userID = get_uid(update)
+def accept_answer(update, context):
     text = "Please enter your answer below"
     send_message(update, context, text)
+    return STS["finish_answer"]
+
+def write_answer_to_question(update, context):
+    answer_content = get_message_text(get_message(update))
+    userID = get_uid(update)
+    qholder.answer_senior_curr_question(userID, answer_content)
+
+    text = "Thank you so much for your answer!"
+    send_message(update, context, text)
+
+    return notify_asker(context, qholder.get_senior_curr_question_obj(userID))
+
+rating_buttons = ["☹️","🤨","🙂","😁"]
+def notify_asker(context, question):
+    answer_content = question.get_newest_answer_text()
+    asker_id = question.get_asker()
+    asker_chat_id = accounter.get_chatID(asker_id)
+    modcode = question.get_modcode()
+    msg = "New answer to your question on {}\n{}\n\nPlease provide a rating for this answer:".format(modcode, answer_content)
+    rating_menu = make_menu(rating_buttons, add_done=False, vertical=False, )
+    send_message_to_chatid(context.bot, asker_chat_id, msg, rating_menu)
     return 
+
+def accept_answer_rating(update,context):
+    cb_query = get_callback_query(update)
+    rating = get_callback_data(cb_query)
+
+    if not rating in rating_buttons:
+        # Not the correct callback
+        logging.error("Not a valid rating %s" % rating)
+        return
+
+    # REMOVE MARKUP
+    remove_inline_buttons(update, context)
+
+    if rating in ["🙂","😁"]:
+        # Good/Great
+        response_msg = "Great! All the best in your studies!\nHit /ask to ask another question!"
+
+    elif rating == "🤨":
+        # Confused
+        response_msg = "Sorry about that! We'll let the senior know their answer was confusing."
+    elif rating == "☹️":
+        # Bad
+        response_msg = "Sorry about that! We'll let the senior know their answer wasn't quite what you were looking for."
+
+    send_message(update,context,response_msg)
+    return
+
+# Dispatches to different handlers based on callback content
+def general_callback_query_handler(update, context):
+    cbq = get_callback_query(update)
+    button_value = get_callback_data(cbq)
+
+    if button_value in rating_buttons:
+        return accept_answer_rating(update, context)
+    elif button_value == "Chope":
+        return accept_chope(update, context)
+    else:
+        logging.warn("Unknown button press %s" % button_value)
+
 
 # CHATBOT INIT
 # Initalizes the handlers for this dispatcher
 def init_handlers(dis):
     start_handler = CommandHandler('start', start_message)
     admin_handler = CommandHandler('admin', print_table)
-    chope_button_handler = CallbackQueryHandler(accept_chope)
+    open_callback_handler = CallbackQueryHandler(general_callback_query_handler)
 
     register_handler = ConversationHandler(
         entry_points=[
@@ -596,7 +674,7 @@ def init_handlers(dis):
         entry_points = [CommandHandler("answer", answer_menu)],
         states={
             STS["handle_answer_menu_press"]:[CallbackQueryHandler(answer_menu_loop)],
-            STS["recieve_senior_answer"]:[CallbackQueryHandler(accept_answer)],
+            STS["finish_answer"]:[MessageHandler(Filters.all, write_answer_to_question)],
             EXIT_MENU:[]
         },
         fallbacks = [
@@ -611,7 +689,9 @@ def init_handlers(dis):
     dis.add_handler(ask_handler)
     dis.add_handler(answer_handler)
     dis.add_handler(account_manage_handler)
-    dis.add_handler(chope_button_handler)
+
+    # Callback Query handlers
+    dis.add_handler(open_callback_handler)
 
     return dis
 

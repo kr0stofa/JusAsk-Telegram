@@ -7,6 +7,7 @@ class Question:
         self.mod_code = mod_code
         self.asker = asker
         self.create_time = datetime.date.isoformat(datetime.datetime.now())
+        self.answers = []
 
     def make_key(self):
         # print("MAKE KEY", self.create_time)
@@ -28,7 +29,20 @@ class Question:
     def toString(self):
         template = "Module: {}\nAsked:{}\n\n{}"
         return template.format(self.mod_code, self.create_time, self.text)
+    
+    def add_answer(self, senior_uid, answer_content):
+        a = Answer(senior_uid, answer_content)
+        self.answers.append(a)
+        return
 
+    def get_answers(self):
+        return self.answers.copy()
+
+    def get_newest_answer_text(self):
+        ans = self.get_answers()
+        if len(ans) < 1:
+            return ""
+        return ans[-1].get_content()
         
 class QuestionHolder:
     def __init__(self):
@@ -71,35 +85,41 @@ class QuestionHolder:
         self.unanswered.pop(qkey)
         return
 
-    # Returns the real pointer, not a copy
-    def _get_senior_q_index(self, uid):
-        return 
-
-    # Returns the real pointer, not a copy
-    def _get_senior_q_list(self, uid):
+    # Returns the ACTUAL pointer to the question list, not a copy
+    # Return list of Questions
+    def _get_real_senior_q_list(self, uid):
         assert uid in self.senior_inventory
         return self.senior_inventory[uid][1]
+
+    # Returns a COPY of the question list
+    # Blank list if not found
+    # Return list of Questions
+    def get_senior_q_list(self, user_ID):
+        return self.senior_inventory.get(user_ID, [0, []])[1].copy()
 
     def add_q_to_senior_inventory(self, user_ID, question_key):
         if not user_ID in self.senior_inventory:
             self.senior_inventory[user_ID] = [0, []]
         question = self._get_question(question_key)
-        self._get_senior_q_list(user_ID).append(question)
+        self._get_real_senior_q_list(user_ID).append(question)
 
+    # Returns a copy of the full inventory
+    # Returns [int, list of Questions]
     def _get_senior_full_inventory(self, user_ID):
         return self.senior_inventory.get(user_ID, []).copy()
     
-    # Returns a copy of the question list
-    # Blank list if not found
-    def get_senior_inventory(self, user_ID):
-        return self.senior_inventory.get(user_ID, [0, []])[1].copy()
+    def senior_has_questions(self, user_ID):
+        if not user_ID in self.senior_inventory:
+            return False
+        
+        return len(self.get_senior_q_list(user_ID)) > 0
 
     def shift_senior_q_index(self, user_ID, shift):
         if not user_ID in self.senior_inventory:
             logging.error("Tried to shift senior index. Senior {} DNE".format(user_ID))
             return
         curr_index = self.senior_inventory[user_ID][0]
-        q_list = self._get_senior_q_list(user_ID)
+        q_list = self.get_senior_q_list(user_ID)
         if curr_index + shift >= len(q_list):
             # Wrap around
             self.senior_inventory[user_ID][0] = 0
@@ -111,15 +131,31 @@ class QuestionHolder:
         
         return
 
+    # Returns question obj
+    def get_senior_curr_question_obj(self, user_ID):
+        curr_index, inventory = self._get_senior_full_inventory(user_ID)
+        return inventory[curr_index]
+
     def get_senior_curr_question_string(self, user_ID):
         curr_index, inventory = self._get_senior_full_inventory(user_ID)
         header = "Question {} out of {}\n".format(curr_index+1, len(inventory))
-        print("INVENTORY:",inventory)
-        body = inventory[curr_index].toString()
+        # print("INVENTORY:",inventory)
+        body = self.get_senior_curr_question_obj(user_ID).toString()
         return header + body
+    
+    def answer_senior_curr_question(self, user_ID, answer_content):
+        qn = self.get_senior_curr_question_obj(user_ID)
+        qn.add_answer(user_ID, answer_content)
+        return
+
 
 class Answer:
-    def __init__(self, question_key, answer_content):
-        self.qkey = question_key
+    def __init__(self, senior_uid, answer_content):
+        self.s_uid = senior_uid
         self.ans_content = answer_content
 
+    def get_content(self):
+        return self.ans_content
+
+    def get_senior_uid(self):
+        return self.s_uid
