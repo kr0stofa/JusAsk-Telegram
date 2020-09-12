@@ -19,7 +19,7 @@ class UDManager:
     def _init_data(self, data):
         self.data = data
         if (not "users" in data) or (not "modules" in data):
-            logging.warn("Loaded userdata file does not have correct structure. Loading from blank. This might irreversibly overwrite the existing JSON!")
+            logging.critical("Loaded userdata file does not have correct structure. Loading from blank. This might irreversibly overwrite the existing JSON!")
             self.data = self.INITIAL_TABLE
         self.users = self.data["users"]
         self.modules = self.data["modules"]
@@ -35,13 +35,17 @@ class UDManager:
     def write_to_file(self):
         write_to_json(self.filepath, self.data)
 
-    # Internal method
     # If user doesnt exist, return a blank dict
     def get_user(self, userID):
+        '''Returns a copy of the user dict'''
         out = self.users.get(userID, {})
         if not out:
             logging.warn("User %s does not exist" % userID,)
-        return out
+        return out.copy()
+    
+    def get_all_users(self):
+        '''Returns a copy of the entire dict of users'''
+        return self.users.copy()
 
     # Called only by write
     def _create_user(self, userID):
@@ -50,9 +54,8 @@ class UDManager:
         logging.warn("Created User: '%s'" % userID)
         return self.users[userID]
 
-    # Writes the given value to the key the user's table 
-    # OVERWRITES any existing data
     def write_to_user(self, userID, user_data):
+        '''Writes the given value to the key the user's table. OVERWRITES any existing data'''
         if not self.get_user(userID):
             self._create_user(userID)
         self.users[userID] = user_data

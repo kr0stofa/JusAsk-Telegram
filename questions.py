@@ -85,16 +85,16 @@ class QuestionHolder:
         self.unanswered.pop(qkey)
         return
 
-    # Returns the ACTUAL pointer to the question list, not a copy
-    # Return list of Questions
     def _get_real_senior_q_list(self, uid):
+        ''' Returns the ACTUAL pointer to the question list, not a copy.
+        Returns list of <Questions>'''
         assert uid in self.senior_inventory
         return self.senior_inventory[uid][1]
 
-    # Returns a COPY of the question list
-    # Blank list if not found
-    # Return list of Questions
     def get_senior_q_list(self, user_ID):
+        '''Returns a COPY of the question list
+        Blank list if not found
+        Return list of <Questions>'''
         return self.senior_inventory.get(user_ID, [0, []])[1].copy()
 
     def add_q_to_senior_inventory(self, user_ID, question_key):

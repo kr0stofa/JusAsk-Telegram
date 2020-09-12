@@ -1,6 +1,5 @@
-from telegram.ext import CommandHandler, ConversationHandler, Filters, Updater
-from telegram.ext import CallbackQueryHandler, InlineQueryHandler, MessageHandler
-from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import CommandHandler, ConversationHandler, Filters, Updater, CallbackQueryHandler, InlineQueryHandler, MessageHandler
+from telegram import ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, MessageEntity
 from local import get_bot_token
 from configs import CHOPE_DURATION
 from account import Accounter
@@ -50,6 +49,7 @@ STS["exit"] = 999
 
 MOD_REG_TABLE = {}
 MQ_MAP = {} # Message-question mapping
+SNR_RVW_MAP = {} # Senior_uid - review_msg mapping
 
 # Storing user chat IDs so the bot can PM them
 def add_to_PM_TABLE(userID, chatID):
@@ -62,15 +62,23 @@ def get_private_chat_id(userID):
 
 ############################## GENERAL TELEGRAM FUNCTIONS ##############################
 def get_uid(update):
+    '''Takes update object (including CallbackQueries) and Returns the username'''
     return update.effective_user.username
 
 def get_message(update):
+    '''Takes update object (including CallbackQueries) and Returns the message object'''
     return update.message
 
 def get_message_text(message):
+    '''Takes message object and Returns the message text'''
     return message.text
 
+def get_message_id(message):
+    '''Takes message object and Returns the message id'''
+    return message.message_id
+
 def get_chat_id(update):
+    '''Takes update object (including CallbackQueries) and Returns the effective_chat id'''
     return update.effective_chat.id
 
 def get_callback_query(update):
@@ -82,16 +90,17 @@ def get_origin_msg(callback_query):
 def get_callback_data(callback_query):
     return callback_query.data
 
-# Returns the message object
-def send_message(update, context, content, markup=""):
-    return send_message_to_chatid(context.bot, get_chat_id(update), content, markup)
+def send_message(update, context, content, markup="", markdown_type = ""):
+    '''Returns the message object'''
+    return send_message_to_chatid(context.bot, get_chat_id(update), content, _markup = markup, markdown_type=markdown_type)
 
 # Returns message object
-def send_message_to_chatid(bot, chat_id, content, markup = ""):
+def send_message_to_chatid(bot, chat_id, content, _markup = "", markdown_type = ""):
     return bot.send_message(
         chat_id = chat_id,
         text = content,
-        reply_markup = markup
+        reply_markup = _markup,
+        parse_mode = markdown_type
     )
 
 # Takes in a list of buttons and return an InlineKeyboardMarkup. Optional flag fo add a "Done" button
@@ -485,12 +494,11 @@ def accept_chope(update,context):
     cb_query = get_callback_query(update)
     button = get_callback_data(cb_query)
     if not button == "Chope":
-        # Not the correct callback
+        # Not the correct callback. This should only trigger when chope is pressed
         logging.error("Not Chope: %s" % button)
         return
 
-    msg = get_message(cb_query)
-    msg_id = msg.message_id
+    msg_id = get_message_id(get_message(cb_query))
     qkey = MQ_MAP.get(msg_id)
 
     # REMOVE MARKUP
@@ -554,7 +562,7 @@ def answer_menu_loop(update, context):
         return EXIT_MENU
 
 def accept_answer(update, context):
-    text = "Please enter your answer below"
+    text = "Please enter your answer below. Please check before sending because you won't be able to recall it afterwards >-<."
     send_message(update, context, text)
     return STS["finish_answer"]
 
@@ -563,25 +571,31 @@ def write_answer_to_question(update, context):
     userID = get_uid(update)
     qholder.answer_senior_curr_question(userID, answer_content)
 
-    text = "Thank you so much for your answer!"
+    text = "Thank you so much for your answer! 😁"
     send_message(update, context, text)
-
-    return notify_asker(context, qholder.get_senior_curr_question_obj(userID))
+    notify_asker(context, userID, qholder.get_senior_curr_question_obj(userID))
+    return STS["exit"]
 
 rating_buttons = ["☹️","🤨","🙂","😁"]
-def notify_asker(context, question):
+def notify_asker(context, senior_uid, question):
     answer_content = question.get_newest_answer_text()
     asker_id = question.get_asker()
     asker_chat_id = accounter.get_chatID(asker_id)
     modcode = question.get_modcode()
     msg = "New answer to your question on {}\n{}\n\nPlease provide a rating for this answer:".format(modcode, answer_content)
     rating_menu = make_menu(rating_buttons, add_done=False, vertical=False, )
-    send_message_to_chatid(context.bot, asker_chat_id, msg, rating_menu)
+    review_msg_obj = send_message_to_chatid(context.bot, asker_chat_id, msg, rating_menu) # Ask user for their rating
+    SNR_RVW_MAP[get_message_id(review_msg_obj)] = senior_uid
+    print("<notify_asker> Review map", SNR_RVW_MAP)
     return 
 
 def accept_answer_rating(update,context):
     cb_query = get_callback_query(update)
     rating = get_callback_data(cb_query)
+    rating_msg_id = get_message_id(get_message(cb_query))
+    print("<accept_answer_rating> rating_msg_id", rating_msg_id)
+    senior_id = SNR_RVW_MAP.get(rating_msg_id, False)
+    if not senior_id: raise Exception("Rating given but senior_id-review mapping doesn't exist", )
 
     if not rating in rating_buttons:
         # Not the correct callback
@@ -591,16 +605,24 @@ def accept_answer_rating(update,context):
     # REMOVE MARKUP
     remove_inline_buttons(update, context)
 
-    if rating in ["🙂","😁"]:
+    change = 0
+    if rating == "😁":
+        response_msg = "Great! All the best in your studies!\nHit /ask to ask another question!"
+        change = 10
+    elif rating == "🙂":
         # Good/Great
         response_msg = "Great! All the best in your studies!\nHit /ask to ask another question!"
-
+        change = 5
     elif rating == "🤨":
         # Confused
-        response_msg = "Sorry about that! We'll let the senior know their answer was confusing."
+        response_msg = "Sorry about that! We'll let the senior know their answer was confusing.\nHit /ask if you would like to keep asking."
+        change = -5
     elif rating == "☹️":
         # Bad
-        response_msg = "Sorry about that! We'll let the senior know their answer wasn't quite what you were looking for."
+        response_msg = "Sorry about that! We'll let the senior know their answer wasn't quite what you were looking for. \nHit /ask if you would like to keep asking."
+        change = -10
+
+    accounter.adjust_score(senior_id, change)
 
     send_message(update,context,response_msg)
     return
@@ -617,13 +639,26 @@ def general_callback_query_handler(update, context):
     else:
         logging.warn("Unknown button press %s" % button_value)
 
+############################## MISC ##############################
+def send_leaderboard(update, context):
+    leaderboard_text = accounter.get_leaderboard()
+    print("Leaderboard", leaderboard_text)
+    send_message(update, context, leaderboard_text, markdown_type="HTML")
+    return
+
+def unknown_response(update, context):
+    text = "Unknown command! Type /help to see what I can do."
+    send_message(update, context, text)
+    return
 
 # CHATBOT INIT
 # Initalizes the handlers for this dispatcher
 def init_handlers(dis):
     start_handler = CommandHandler('start', start_message)
     admin_handler = CommandHandler('admin', print_table)
+    leaderboard_handler = CommandHandler('leaderboard', send_leaderboard)
     open_callback_handler = CallbackQueryHandler(general_callback_query_handler)
+    unknown_command_handler = MessageHandler(Filters.command, unknown_response)
 
     register_handler = ConversationHandler(
         entry_points=[
@@ -689,9 +724,11 @@ def init_handlers(dis):
     dis.add_handler(ask_handler)
     dis.add_handler(answer_handler)
     dis.add_handler(account_manage_handler)
+    dis.add_handler(leaderboard_handler)
 
     # Callback Query handlers
     dis.add_handler(open_callback_handler)
+    dis.add_handler(unknown_command_handler)
 
     return dis
 

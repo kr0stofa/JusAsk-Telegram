@@ -33,6 +33,7 @@ class SDManager:
         mods = self._get_mods(school)
         return (mod in mods)
 
-test = SDManager()
-test.load()
-print(test.get_modlist("NUS"))
+if __name__ == "__main__":
+    test = SDManager()
+    test.load()
+    print("<SDManager>", test.get_modlist("NUS")) #DEBUG
